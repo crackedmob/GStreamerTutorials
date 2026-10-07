@@ -1,9 +1,17 @@
 #include <gst/gst.h>
+#include <signal.h>
 
 #ifdef __APPLE__
 #include <TargetConditionals.h>
 #endif
 
+
+
+volatile sig_atomic_t terminate = 0;
+
+void handle_sigint(int sig){
+    terminate = 1;
+}
 int tutorial_main(int argc, char *argv[]){
     GstElement *pipeline, *audio_source, *tee, *audio_queue, *audio_convert, *audio_resample, *audio_sink;
     GstElement *video_queue, *visual, *video_convert, *video_sink;
@@ -16,7 +24,7 @@ int tutorial_main(int argc, char *argv[]){
     // initialize GStreamer
     gst_init(&argc, &argv);
 
-
+    signal(SIGINT, handle_sigint);
     // audiotestsrc : produces a synthetic tone
     // wavescope : consumes an audio signal and renders a waveform as if it was (admittedly cheap) oscilloscope
     // create the elements
@@ -78,7 +86,7 @@ int tutorial_main(int argc, char *argv[]){
     tee_video_pad = gst_element_request_pad_simple(tee, "src_%u");
     g_print("obtained request pad %s for video branch.\n", gst_pad_get_name(tee_video_pad));
     queue_video_pad = gst_element_get_static_pad(video_queue, "sink");
-    if(gst_pad_link(tee_audio_pad, queue_audio_pad) != GST_PAD_LINK_OK){
+    if(gst_pad_link(tee_audio_pad, queue_audio_pad) != GST_PAD_LINK_OK || gst_pad_link(tee_video_pad, queue_video_pad) != GST_PAD_LINK_OK){
         g_printerr("tee could not be linked.\n");
         gst_object_unref(pipeline);
         return -1;
@@ -92,8 +100,13 @@ int tutorial_main(int argc, char *argv[]){
 
     // wait until error or eos
     bus = gst_element_get_bus(pipeline);
-    msg = gst_bus_timed_pop_filtered(bus, GST_CLOCK_TIME_NONE, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
+    while(!terminate){
+    msg = gst_bus_timed_pop_filtered(bus, 100 * GST_MSECOND, GST_MESSAGE_ERROR | GST_MESSAGE_EOS);
 
+        if(msg != NULL){
+            break;
+        }
+    }
     // release the request pads from the tee, and unref them
     gst_element_release_request_pad(tee, tee_audio_pad);
     gst_element_release_request_pad(tee, tee_video_pad);
